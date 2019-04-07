@@ -22,7 +22,7 @@ class Settings():
         self.theater_subgroup = __addon__.getSetting("theater_subgroup")
         self.static_group = __addon__.getSetting("static_group")
 
-        self.dim_time = int(float(__addon__.getSetting("dim_time"))*10)
+#        self.dim_time = int(float(__addon__.getSetting("dim_time"))*10)
         self.proportional_dim_time = __addon__.getSetting("proportional_dim_time") == "true"
 
         self.theater_start_bri_override = __addon__.getSetting("theater_start_bri_override") == "true"

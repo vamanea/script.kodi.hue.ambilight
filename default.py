@@ -25,6 +25,7 @@ import bridge
 import ui
 import algorithm
 import image
+import threading
 
 xbmclog("Kodi Hue: In .(argv={}) service started, version: {}".format(
     sys.argv, get_version()))
@@ -156,6 +157,64 @@ class Hue:
             )
 
 
+class ColourTransition(object):
+        shouldStop = False
+        haveLast = False
+        lastColor = None
+        mqtt = None
+        duration = 0
+        hsvRatios = None
+        thread = None
+        ev = None
+
+        def launch(self, algorithm, mqttc):
+            self.ev = Event()
+            self.ev.set()
+            self.mqtt = mqttc
+            self.thread = threading.Thread(target = self.initialize, args = (algorithm, mqttc))
+            self.thread.start()
+        def shouldStop(self):
+            return self.shouldStop
+
+        def stop(self):
+            self.ev.set()
+            self.shouldStop = True
+
+        def pause(self):
+            print "Pause transition thread"
+            self.ev.clear()
+
+        def resume(self):
+            self.ev.set()
+
+        def initialize(self, algorithm, mqttc):
+            while self.shouldStop():
+                if not self.ev.isSet():
+                    self.ev.wait()
+                if self.hsvRatios != None:
+                    #print "Thread transition %d" %(self.duration)
+                    h, s, v = self.hsvRatios.hue(
+                        True, hue.settings.ambilight_min, hue.settings.ambilight_max)
+                    self.lastColor, self.duration = algorithm.transition_rgb(self.lastColor, self.haveLast, self.hsvRatios, self.mqtt)
+                    if self.lastColor != None:
+                        self.haveLast = True
+                    else:
+                        self.haveLast = False
+
+                if self.duration > 0:
+                    time.sleep(self.duration / 50)
+                else:
+                    time.sleep(0.05)
+            print "HUE thread stop"
+
+
+        def transition(self, hsv_ratios):
+            #print "HUE Transition"
+            self.hsvRatios = hsv_ratios[0]
+
+        def waitThread(self):
+            self.thread.join()
+
 def run():
     have_last = False
     last_ratios = []
@@ -163,6 +222,8 @@ def run():
     if player is None:
         xbmclog('Kodi Hue: In run() could not instantiate player')
         return
+    transition = ColourTransition()
+    transition.launch(algorithm, mqttc)
 
     xbmclog('Kodi Hue: In run()')
     while not monitor.abortRequested():
@@ -170,6 +231,7 @@ def run():
             startReadOut = False
             vals = {}
             if player.playingvideo:  # only if there's actually video
+                transition.resume()
                 try:
                     vals = capture.getImage(200)
                     if len(vals) > 0 and player.playingvideo:
@@ -185,24 +247,28 @@ def run():
                             1,
 #                            len(hue.ambilight_controller.lights)
                         )
-                        h, s, v = hsv_ratios[0].hue(
-                                True, hue.settings.ambilight_min, hue.settings.ambilight_max)
-                        algorithm.transition_rgb(last_ratios, have_last,
-                                hsv_ratios[0], mqttc )
-                        last_ratios = [hsv_ratios[0].h, hsv_ratios[0].s, hsv_ratios[0].v]
-                        have_last = True
-
+                        #h, s, v = hsv_ratios[0].hue(
+                        #        True, hue.settings.ambilight_min, hue.settings.ambilight_max)
+                        #algorithm.transition_rgb(last_ratios, have_last,
+                        #        hsv_ratios[0], mqttc )
+                        #last_ratios = [hsv_ratios[0].h, hsv_ratios[0].s, hsv_ratios[0].v]
+                        #have_last = True
+                        transition.transition(hsv_ratios)
                         xbmclog('Kodi Hue: HSV values')
 #                        for i in range(len(hue.ambilight_controller.lights)):
 #                            algorithm.transition_colorspace(
 #                                hue, hue.ambilight_controller.lights.values()[i], hsv_ratios[i], )
                 except ZeroDivisionError:
                     pass
+        else:
+            transition.pause()
 
         if monitor.waitForAbort(0.5):
+            transition.stop()
             xbmclog('Kodi Hue: In run() deleting player')
             del player  # might help with slow exit.
-
+    transition.waitThread()
+    del transition
 
 def state_changed(state, duration):
     xbmclog('Kodi Hue: In state_changed(state={}, duration={})'.format(
